@@ -1,7 +1,12 @@
-// Package config loads the daemon's runtime configuration. The HTTP daemon is
-// a loopback-only sidecar: it binds 127.0.0.1, takes no public traffic, and
-// reads everything it needs from the environment with sane defaults so it can
-// boot with zero configuration in development.
+// Package config loads the daemon's runtime configuration. By default the HTTP
+// daemon is a loopback-only sidecar: it binds 127.0.0.1, takes no public
+// traffic, and reads everything it needs from the environment with sane
+// defaults so it can boot with zero configuration in development.
+//
+// A daemon can opt into an authenticated remote mode (e.g. hosted on Fly.io)
+// by setting AO_AUTH_TOKEN and pointing AO_BIND_HOST beyond loopback. Binding a
+// non-loopback host without an auth token is refused: the daemon must never
+// become a public no-auth service. See Load.
 package config
 
 import (
@@ -15,12 +20,16 @@ import (
 )
 
 const (
-	// LoopbackHost is the only host the daemon ever binds. There is deliberately
-	// no AO_HOST env var: the daemon has no auth/CORS/TLS and a stray
-	// AO_HOST=0.0.0.0 would turn it into a public no-auth service. If a
-	// non-default loopback (e.g. ::1, 127.0.0.2) is ever needed, add it back with
-	// an IsLoopback() validator — not a raw env read.
+	// LoopbackHost is the host the daemon binds by default. Historically it was
+	// the ONLY host the daemon ever bound — it has no TLS and, without an auth
+	// token, no access control, so a stray bind to 0.0.0.0 would turn it into a
+	// public no-auth service. The bind host is now configurable via AO_BIND_HOST
+	// (validated by validateBindHost), but Load refuses any non-loopback host
+	// unless AO_AUTH_TOKEN is also set, preserving that invariant.
 	LoopbackHost = "127.0.0.1"
+	// DefaultRuntime is the session runtime adapter used when AO_RUNTIME is unset.
+	// "zellij" runs sessions as local panes; "flysprite" runs them in Fly Sprites.
+	DefaultRuntime = "zellij"
 	// DefaultPort is the single port for REST, terminal mux, health, and control.
 	DefaultPort = 3001
 	// DefaultRequestTimeout bounds a single REST request. Long-lived terminal mux
@@ -72,7 +81,8 @@ var DefaultAllowedOrigins = []string{
 // Config is the fully-resolved daemon configuration. It is immutable once
 // built by Load.
 type Config struct {
-	// Host is the bind address. Always loopback — see LoopbackHost.
+	// Host is the bind address. Defaults to loopback (see LoopbackHost);
+	// AO_BIND_HOST may widen it, but only when AuthToken is set.
 	Host string
 	// Port is the TCP port to bind. The daemon fails fast if it is taken.
 	Port int
@@ -92,6 +102,13 @@ type Config struct {
 	// AllowedOrigins are the browser origins granted CORS read access (see
 	// DefaultAllowedOrigins). Overridden by AO_ALLOWED_ORIGINS.
 	AllowedOrigins []string
+	// AuthToken, when non-empty, is the shared bearer token the daemon requires
+	// on every /api/v1/* request and the /mux WebSocket. Empty selects the
+	// historical loopback no-auth mode. Set via AO_AUTH_TOKEN.
+	AuthToken string
+	// Runtime selects the session runtime adapter: "zellij" (local panes) or
+	// "flysprite" (Fly Sprites). Set via AO_RUNTIME; defaults to DefaultRuntime.
+	Runtime string
 	// Telemetry controls local/remote telemetry sinks.
 	Telemetry TelemetryConfig
 }
@@ -115,13 +132,18 @@ func (c Config) Addr() string {
 //	AO_DATA_DIR          durable state dir   (default ~/.ao/data)
 //	AO_AGENT             compatibility agent id (default claude-code)
 //	AO_ALLOWED_ORIGINS   CORS origins, comma-separated (default DefaultAllowedOrigins)
+//	AO_AUTH_TOKEN        shared bearer token; empty = loopback no-auth mode
+//	AO_RUNTIME           session runtime zellij|flysprite (default zellij)
+//	AO_BIND_HOST         bind host; non-loopback requires AO_AUTH_TOKEN (default 127.0.0.1)
 //	AO_TELEMETRY_EVENTS  local event capture off|on (default off)
 //	AO_TELEMETRY_METRICS local metric capture off|on (default off)
 //	AO_TELEMETRY_REMOTE  remote exporter off|posthog (default off)
 //	AO_TELEMETRY_POSTHOG_KEY   PostHog project key
 //	AO_TELEMETRY_POSTHOG_HOST  PostHog host (default DefaultTelemetryPostHogHost)
 //
-// The bind host is not configurable: the daemon is loopback-only by design.
+// The bind host defaults to loopback. AO_BIND_HOST may widen it for an
+// authenticated remote deployment, but Load refuses a non-loopback host unless
+// AO_AUTH_TOKEN is set.
 func Load() (Config, error) {
 	cfg := Config{
 		Host:            LoopbackHost,
@@ -129,6 +151,7 @@ func Load() (Config, error) {
 		RequestTimeout:  DefaultRequestTimeout,
 		ShutdownTimeout: DefaultShutdownTimeout,
 		Agent:           DefaultAgent,
+		Runtime:         DefaultRuntime,
 		AllowedOrigins:  DefaultAllowedOrigins,
 		Telemetry: TelemetryConfig{
 			Remote:      TelemetryRemoteOff,
@@ -165,6 +188,34 @@ func Load() (Config, error) {
 
 	if raw := os.Getenv("AO_AGENT"); raw != "" {
 		cfg.Agent = raw
+	}
+
+	if raw := os.Getenv("AO_AUTH_TOKEN"); raw != "" {
+		cfg.AuthToken = raw
+	}
+
+	if raw := os.Getenv("AO_RUNTIME"); raw != "" {
+		switch raw {
+		case "zellij", "flysprite":
+			cfg.Runtime = raw
+		default:
+			return Config{}, fmt.Errorf("invalid AO_RUNTIME %q: must be zellij|flysprite", raw)
+		}
+	}
+
+	// AO_BIND_HOST widens the bind beyond loopback. It is honoured only when an
+	// auth token is set: the daemon has no TLS or access control otherwise, and
+	// exposing it without a token would create a public no-auth service. TLS is
+	// expected to be terminated by an upstream proxy (e.g. the Fly edge).
+	if raw := os.Getenv("AO_BIND_HOST"); raw != "" {
+		host, err := validateBindHost(raw)
+		if err != nil {
+			return Config{}, err
+		}
+		if !isLoopbackHost(host) && cfg.AuthToken == "" {
+			return Config{}, fmt.Errorf("AO_BIND_HOST=%q binds beyond loopback but AO_AUTH_TOKEN is not set: refusing to expose a no-auth daemon", raw)
+		}
+		cfg.Host = host
 	}
 
 	if raw, ok := os.LookupEnv("AO_ALLOWED_ORIGINS"); ok && raw != "" {
@@ -249,6 +300,35 @@ func parseTelemetryRemote(raw string) (TelemetryRemote, error) {
 	default:
 		return "", fmt.Errorf("must be off|posthog")
 	}
+}
+
+// validateBindHost accepts an IP literal (e.g. 0.0.0.0, ::, 127.0.0.1) or the
+// hostname "localhost" — the values that make sense as a TCP bind target. It
+// rejects arbitrary hostnames so a typo cannot silently bind an unexpected
+// interface.
+func validateBindHost(raw string) (string, error) {
+	host := strings.TrimSpace(raw)
+	if host == "" {
+		return "", fmt.Errorf("AO_BIND_HOST must not be empty")
+	}
+	if host == "localhost" {
+		return host, nil
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		return host, nil
+	}
+	return "", fmt.Errorf("invalid AO_BIND_HOST %q: must be an IP literal or \"localhost\"", raw)
+}
+
+// isLoopbackHost reports whether a validated bind host stays on loopback.
+func isLoopbackHost(host string) bool {
+	if host == "localhost" {
+		return true
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		return ip.IsLoopback()
+	}
+	return false
 }
 
 // parsePositiveDuration rejects zero and negative durations: a zero

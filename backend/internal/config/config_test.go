@@ -10,7 +10,7 @@ import (
 func TestLoadDefaults(t *testing.T) {
 	// Clear every recognised var so we observe pure defaults regardless of the
 	// surrounding environment.
-	for _, k := range []string{"AO_PORT", "AO_REQUEST_TIMEOUT", "AO_SHUTDOWN_TIMEOUT", "AO_RUN_FILE", "AO_DATA_DIR", "AO_AGENT", "AO_ALLOWED_ORIGINS", "AO_TELEMETRY_EVENTS", "AO_TELEMETRY_METRICS", "AO_TELEMETRY_REMOTE", "AO_TELEMETRY_POSTHOG_KEY", "AO_TELEMETRY_POSTHOG_HOST"} {
+	for _, k := range []string{"AO_PORT", "AO_REQUEST_TIMEOUT", "AO_SHUTDOWN_TIMEOUT", "AO_RUN_FILE", "AO_DATA_DIR", "AO_AGENT", "AO_AUTH_TOKEN", "AO_RUNTIME", "AO_BIND_HOST", "AO_ALLOWED_ORIGINS", "AO_TELEMETRY_EVENTS", "AO_TELEMETRY_METRICS", "AO_TELEMETRY_REMOTE", "AO_TELEMETRY_POSTHOG_KEY", "AO_TELEMETRY_POSTHOG_HOST"} {
 		t.Setenv(k, "")
 	}
 
@@ -51,6 +51,80 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.Telemetry.Remote != TelemetryRemoteOff || cfg.Telemetry.PostHogHost != DefaultTelemetryPostHogHost {
 		t.Fatalf("Telemetry defaults = %+v", cfg.Telemetry)
 	}
+	if cfg.AuthToken != "" {
+		t.Errorf("AuthToken = %q, want empty (loopback no-auth default)", cfg.AuthToken)
+	}
+	if cfg.Runtime != DefaultRuntime {
+		t.Errorf("Runtime = %q, want %q", cfg.Runtime, DefaultRuntime)
+	}
+}
+
+// TestLoadBindHostAndAuth covers the opt-in authenticated remote mode: a
+// non-loopback bind is refused without a token, accepted with one, and the
+// runtime selector and bind-host validation reject malformed values.
+func TestLoadBindHostAndAuth(t *testing.T) {
+	clear := func(t *testing.T) {
+		for _, k := range []string{"AO_AUTH_TOKEN", "AO_RUNTIME", "AO_BIND_HOST"} {
+			t.Setenv(k, "")
+		}
+	}
+
+	t.Run("non-loopback bind without token is refused", func(t *testing.T) {
+		clear(t)
+		t.Setenv("AO_BIND_HOST", "0.0.0.0")
+		if _, err := Load(); err == nil {
+			t.Fatal("Load: want error binding 0.0.0.0 without AO_AUTH_TOKEN, got nil")
+		}
+	})
+
+	t.Run("non-loopback bind with token is accepted", func(t *testing.T) {
+		clear(t)
+		t.Setenv("AO_BIND_HOST", "0.0.0.0")
+		t.Setenv("AO_AUTH_TOKEN", "tok")
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if cfg.Host != "0.0.0.0" || cfg.AuthToken != "tok" {
+			t.Fatalf("Host/AuthToken = %q/%q, want 0.0.0.0/tok", cfg.Host, cfg.AuthToken)
+		}
+	})
+
+	t.Run("loopback bind without token is allowed", func(t *testing.T) {
+		clear(t)
+		t.Setenv("AO_BIND_HOST", "127.0.0.1")
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if cfg.Host != "127.0.0.1" {
+			t.Fatalf("Host = %q, want 127.0.0.1", cfg.Host)
+		}
+	})
+
+	t.Run("invalid bind host is rejected", func(t *testing.T) {
+		clear(t)
+		t.Setenv("AO_BIND_HOST", "not a host")
+		if _, err := Load(); err == nil {
+			t.Fatal("Load: want error for malformed AO_BIND_HOST, got nil")
+		}
+	})
+
+	t.Run("runtime selector validated", func(t *testing.T) {
+		clear(t)
+		t.Setenv("AO_RUNTIME", "flysprite")
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if cfg.Runtime != "flysprite" {
+			t.Fatalf("Runtime = %q, want flysprite", cfg.Runtime)
+		}
+		t.Setenv("AO_RUNTIME", "bogus")
+		if _, err := Load(); err == nil {
+			t.Fatal("Load: want error for unknown AO_RUNTIME, got nil")
+		}
+	})
 }
 
 func TestLoadOverrides(t *testing.T) {

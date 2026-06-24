@@ -33,9 +33,11 @@ func mountTerminalMux(r chi.Router, mgr *terminal.Manager, log *slog.Logger) {
 // all stream logic lives in internal/terminal.
 func terminalMuxHandler(mgr *terminal.Manager, log *slog.Logger) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		// InsecureSkipVerify disables coder/websocket's same-origin check: the
-		// daemon binds loopback only and the desktop renderer's origin differs
-		// from the loopback host, mirroring the legacy Node mux server.
+		// InsecureSkipVerify disables coder/websocket's same-origin check. In
+		// loopback mode the desktop renderer's origin differs from the loopback
+		// host (mirroring the legacy Node mux server); in authenticated remote
+		// mode the bearer token validated by authMiddleware — which runs before
+		// this handler and gates /mux — is the access boundary, not the Origin.
 		c, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true})
 		if err != nil {
 			log.Warn("terminal mux: websocket upgrade failed", "err", err)

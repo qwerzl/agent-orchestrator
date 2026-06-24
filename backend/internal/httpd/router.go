@@ -51,6 +51,9 @@ func NewRouterWithControl(cfg config.Config, log *slog.Logger, termMgr *terminal
 	r.Use(requestLogger(log, deps.Telemetry))
 	r.Use(recoverTelemetry(log, deps.Telemetry))
 	r.Use(corsMiddleware(cfg.AllowedOrigins))
+	// authMiddleware runs after cors so it never sees a terminated preflight. It
+	// is a pass-through unless cfg.AuthToken is set (authenticated remote mode).
+	r.Use(authMiddleware(cfg))
 
 	// JSON envelopes for unmatched routes / methods — chi's defaults are
 	// text/plain, which would break consumers that parse every response as

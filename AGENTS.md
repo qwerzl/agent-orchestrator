@@ -77,7 +77,7 @@ For code entry points:
 
 ## Hard rules and boundaries
 
-- The daemon is a loopback-only sidecar. Do not make the bind host configurable or expose it beyond `127.0.0.1`.
+- The daemon binds loopback (`127.0.0.1`) by default and has no TLS. It may bind beyond loopback (via `AO_BIND_HOST`) ONLY for an authenticated remote deployment: a non-loopback bind is refused unless `AO_AUTH_TOKEN` is set, and that token gates every `/api/v1/*` request and the `/mux` WebSocket (see `httpd/auth.go`). Never expose the daemon without a token, expect TLS to be terminated by an upstream proxy (e.g. the Fly edge), and keep `/shutdown` + `/internal/telemetry/*` loopback-only (`localControlRequest`).
 - The CLI is a thin client. Do not port old in-process TypeScript CLI behavior that bypasses daemon HTTP routes.
 - Do not store derived/display session status. Status is derived from durable facts (`activity_state`, `is_terminated`, PR/check/comment facts) at service read time.
 - Do not treat failed/unknown runtime probes as proof a session is dead.
