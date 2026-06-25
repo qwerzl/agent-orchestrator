@@ -2,7 +2,7 @@
 #   fly deploy --config deploy/fly/fly.toml
 # Set the app name and secrets first — see deploy/fly/README.md.
 
-app = "ao-daemon"
+app = "tao-daemon"
 primary_region = "iad"
 
 [build]

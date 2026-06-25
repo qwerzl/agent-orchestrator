@@ -21,20 +21,24 @@ authenticated public URL) and steer them from claude.ai via Remote Control.
 
 ## 1. Create the app + volume
 
+Fly app names are **globally unique** (not per-account), so pick your own and
+keep `app` in `fly.toml`, the `--app` flags, and `AO_PUBLIC_URL` all in sync. The
+volume name must match `[mounts] source` in `fly.toml` (`ao_data`).
+
 ```sh
 # from the repo root
-fly apps create ao-daemon          # or edit `app` in fly.toml
-fly volumes create ao_data --size 1 --region iad --app ao-daemon
+fly apps create tao-daemon          # use your own globally-unique name; match `app` in fly.toml
+fly volumes create ao_data --size 1 --region iad --app tao-daemon
 ```
 
 ## 2. Set secrets
 
 ```sh
-fly secrets set --app ao-daemon \
+fly secrets set --app tao-daemon \
   AO_AUTH_TOKEN="$(openssl rand -hex 32)" \
   AO_SPRITES_TOKEN="<your-fly-sprites-token>" \
   AO_GITHUB_TOKEN="<your-github-token>" \
-  AO_PUBLIC_URL="https://ao-daemon.fly.dev" \
+  AO_PUBLIC_URL="https://tao-daemon.fly.dev" \
   AO_CLAUDE_CREDENTIALS="$(cat claude-credentials.json)"
 ```
 
@@ -66,14 +70,14 @@ token-rotation / "logged in elsewhere" behavior.
 
 ```sh
 fly deploy --config deploy/fly/fly.toml
-fly status --app ao-daemon
-curl https://ao-daemon.fly.dev/healthz   # {"status":"ok",...}
+fly status --app tao-daemon
+curl https://tao-daemon.fly.dev/healthz   # {"status":"ok",...}
 ```
 
 ## 4. Use it from your laptop
 
 ```sh
-export AO_DAEMON_URL="https://ao-daemon.fly.dev"
+export AO_DAEMON_URL="https://tao-daemon.fly.dev"
 export AO_AUTH_TOKEN="<the AO_AUTH_TOKEN you set above>"
 
 ao project add <a repo with a GitHub origin>   # the sprite clones its origin URL
