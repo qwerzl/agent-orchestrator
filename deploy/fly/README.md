@@ -45,7 +45,7 @@ fly secrets set --app ao-daemon \
 
 ### Remote Control credential
 
-Remote Control requires a **full-scope `claude auth login` token**, *not* a
+Remote Control requires a **full-scope `claude auth login` token**, _not_ a
 long-lived `claude setup-token` / `CLAUDE_CODE_OAUTH_TOKEN` (those are
 inference-only and Remote Control is refused with them). On the machine where you
 ran `claude auth login`, export the credential:
