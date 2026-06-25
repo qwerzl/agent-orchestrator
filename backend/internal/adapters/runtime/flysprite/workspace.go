@@ -24,21 +24,34 @@ type RepoResolver interface {
 	RepoOriginURL(ctx context.Context, projectID domain.ProjectID) (string, error)
 }
 
-// Workspace provisions a session's working copy INSIDE a Fly Sprite: it creates
-// the sprite, ensures zellij is installed, and clones the project repo onto the
-// session branch. It returns a remote WorkspaceInfo so the session manager skips
-// daemon-host provisioning.
-type Workspace struct {
-	host  Host
-	repos RepoResolver
+// Secrets are the per-sprite credentials injected at provision time so the agent
+// can authenticate: the claude.ai OAuth credential (so Remote Control works and
+// claude runs without an API key) and a GitHub token (for git clone/push + gh).
+// Both are optional; an empty field is simply not written.
+type Secrets struct {
+	// ClaudeCredentials is the raw content written to ~/.claude/.credentials.json.
+	ClaudeCredentials string
+	// GitHubToken authenticates HTTPS git + gh inside the sprite.
+	GitHubToken string
 }
 
-// NewWorkspace builds a Workspace. Both dependencies are required.
-func NewWorkspace(host Host, repos RepoResolver) *Workspace {
+// Workspace provisions a session's working copy INSIDE a Fly Sprite: it creates
+// the sprite, injects credentials, ensures zellij is installed, and clones the
+// project repo onto the session branch. It returns a remote WorkspaceInfo so the
+// session manager skips daemon-host provisioning.
+type Workspace struct {
+	host    Host
+	repos   RepoResolver
+	secrets Secrets
+}
+
+// NewWorkspace builds a Workspace. host and repos are required; secrets may be
+// zero (the agent then relies on whatever the sprite image already has).
+func NewWorkspace(host Host, repos RepoResolver, secrets Secrets) *Workspace {
 	if host == nil || repos == nil {
 		panic("flysprite: Workspace requires Host and RepoResolver")
 	}
-	return &Workspace{host: host, repos: repos}
+	return &Workspace{host: host, repos: repos, secrets: secrets}
 }
 
 // Create destroys any leftover sprite for the session, creates a fresh one,
@@ -118,9 +131,13 @@ func (w *Workspace) Destroy(ctx context.Context, info ports.WorkspaceInfo) error
 	return w.host.Destroy(ctx, sprite)
 }
 
-// provision installs zellij and clones the repo onto the branch, returning the
-// in-sprite repo directory.
+// provision injects credentials, installs zellij, and clones the repo onto the
+// branch, returning the in-sprite repo directory. Credentials are written first
+// so the clone (and later agent pushes) can authenticate.
 func (w *Workspace) provision(ctx context.Context, box Box, originURL, branch string) (string, error) {
+	if err := w.writeSecrets(ctx, box); err != nil {
+		return "", err
+	}
 	if out, err := box.Run(ctx, nil, "", "bash", "-c", installZellijScript()); err != nil || !strings.Contains(string(out), "ZELLIJ_OK") {
 		return "", fmt.Errorf("flysprite workspace: install zellij: %w (%s)", err, strings.TrimSpace(string(out)))
 	}
@@ -129,6 +146,33 @@ func (w *Workspace) provision(ctx context.Context, box Box, originURL, branch st
 		return "", fmt.Errorf("flysprite workspace: clone %s: %w (%s)", originURL, err, strings.TrimSpace(string(out)))
 	}
 	return repoDir, nil
+}
+
+// writeSecrets injects the claude.ai credential and GitHub auth into the sprite.
+// claude reads ~/.claude/.credentials.json for its OAuth login (no Keychain on
+// Linux); git uses a credential-store file and gh reads its hosts.yml.
+func (w *Workspace) writeSecrets(ctx context.Context, box Box) error {
+	if c := strings.TrimSpace(w.secrets.ClaudeCredentials); c != "" {
+		if err := box.WriteFile(ctx, "/home/sprite/.claude/.credentials.json", []byte(w.secrets.ClaudeCredentials), 0o600); err != nil {
+			return fmt.Errorf("flysprite workspace: write claude credentials: %w", err)
+		}
+	}
+	if tok := strings.TrimSpace(w.secrets.GitHubToken); tok != "" {
+		gitCreds := "https://x-access-token:" + tok + "@github.com\n"
+		if err := box.WriteFile(ctx, "/home/sprite/.git-credentials", []byte(gitCreds), 0o600); err != nil {
+			return fmt.Errorf("flysprite workspace: write git credentials: %w", err)
+		}
+		cfgScript := `git config --global credential.helper store && ` +
+			`git config --global url."https://github.com/".insteadOf git@github.com:`
+		if out, err := box.Run(ctx, nil, "", "bash", "-c", cfgScript); err != nil {
+			return fmt.Errorf("flysprite workspace: configure git auth: %w (%s)", err, strings.TrimSpace(string(out)))
+		}
+		ghHosts := "github.com:\n    oauth_token: " + tok + "\n    git_protocol: https\n"
+		if err := box.WriteFile(ctx, "/home/sprite/.config/gh/hosts.yml", []byte(ghHosts), 0o600); err != nil {
+			return fmt.Errorf("flysprite workspace: write gh hosts: %w", err)
+		}
+	}
+	return nil
 }
 
 func (w *Workspace) mustOriginURL(ctx context.Context, projectID domain.ProjectID) string {

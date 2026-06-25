@@ -248,6 +248,9 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		IssueID:       string(cfg.IssueID),
 		Config:        agentConfig,
 		Permissions:   agentConfig.Permissions,
+		// A remote (sandboxed) workspace runs the agent with injected claude.ai
+		// credentials, so enable Remote Control by default there.
+		RemoteControl: ws.Remote,
 	})
 	if err != nil {
 		_ = m.workspace.Destroy(ctx, ws)
@@ -499,8 +502,12 @@ func (m *Manager) Restore(ctx context.Context, id domain.SessionID) (domain.Sess
 	if !ok {
 		return domain.SessionRecord{}, fmt.Errorf("restore %s: no agent adapter for harness %q", id, rec.Harness)
 	}
-	if err := m.prepareWorkspace(ctx, agent, id, ws.Path); err != nil {
-		return domain.SessionRecord{}, fmt.Errorf("restore %s: %w", id, err)
+	// Daemon-host provisioning only applies to a local workspace; a remote
+	// (sprite) workspace is provisioned in-place by its adapter (see Spawn).
+	if !ws.Remote {
+		if err := m.prepareWorkspace(ctx, agent, id, ws.Path); err != nil {
+			return domain.SessionRecord{}, fmt.Errorf("restore %s: %w", id, err)
+		}
 	}
 	// The system prompt is derived, not persisted: recompute it so a restored
 	// session keeps its standing instructions across the relaunch.
@@ -510,7 +517,7 @@ func (m *Manager) Restore(ctx context.Context, id domain.SessionID) (domain.Sess
 	}
 	// Restore re-applies the project's resolved agent config so a configured
 	// model/permissions carry across a restore, matching fresh spawn.
-	argv, err := restoreArgv(ctx, agent, id, ws.Path, meta, systemPrompt, effectiveAgentConfig(rec.Kind, project.Config))
+	argv, err := restoreArgv(ctx, agent, id, ws.Path, meta, systemPrompt, effectiveAgentConfig(rec.Kind, project.Config), ws.Remote)
 	if err != nil {
 		return domain.SessionRecord{}, fmt.Errorf("restore %s: %w", id, err)
 	}
@@ -928,13 +935,13 @@ func (m *Manager) prepareWorkspace(ctx context.Context, agent ports.Agent, id do
 // restoreArgv builds the argv to relaunch a torn-down session: the agent's
 // native resume command when it can continue the session, else a fresh launch.
 // The agent signals via ok=false (e.g. no native session id captured yet).
-func restoreArgv(ctx context.Context, agent ports.Agent, id domain.SessionID, workspacePath string, meta domain.SessionMetadata, systemPrompt string, agentConfig ports.AgentConfig) ([]string, error) {
+func restoreArgv(ctx context.Context, agent ports.Agent, id domain.SessionID, workspacePath string, meta domain.SessionMetadata, systemPrompt string, agentConfig ports.AgentConfig, remoteControl bool) ([]string, error) {
 	ref := ports.SessionRef{
 		ID:            string(id),
 		WorkspacePath: workspacePath,
 		Metadata:      map[string]string{ports.MetadataKeyAgentSessionID: meta.AgentSessionID},
 	}
-	cmd, ok, err := agent.GetRestoreCommand(ctx, ports.RestoreConfig{Session: ref, SystemPrompt: systemPrompt, Config: agentConfig, Permissions: agentConfig.Permissions})
+	cmd, ok, err := agent.GetRestoreCommand(ctx, ports.RestoreConfig{Session: ref, SystemPrompt: systemPrompt, Config: agentConfig, Permissions: agentConfig.Permissions, RemoteControl: remoteControl})
 	if err != nil {
 		return nil, fmt.Errorf("restore command: %w", err)
 	}
@@ -948,6 +955,7 @@ func restoreArgv(ctx context.Context, agent ports.Agent, id domain.SessionID, wo
 		SystemPrompt:  systemPrompt,
 		Config:        agentConfig,
 		Permissions:   agentConfig.Permissions,
+		RemoteControl: remoteControl,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("launch command: %w", err)

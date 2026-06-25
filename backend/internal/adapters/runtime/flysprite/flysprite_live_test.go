@@ -43,7 +43,7 @@ func TestLiveSpriteRoundTrip(t *testing.T) {
 	)
 
 	host := NewHost(token)
-	ws := NewWorkspace(host, staticRepos{url: repoURL})
+	ws := NewWorkspace(host, staticRepos{url: repoURL}, Secrets{})
 	rt := New(Options{Host: host})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)

@@ -113,6 +113,17 @@ type Config struct {
 	// runtime to create/exec/destroy sprites. Required when Runtime=="flysprite".
 	// Set via AO_SPRITES_TOKEN.
 	SpritesToken string
+	// ClaudeCredentials is the raw contents of the user's claude.ai OAuth
+	// credential (~/.claude/.credentials.json), injected into each sprite so
+	// Remote Control works. Set via AO_CLAUDE_CREDENTIALS, or read from
+	// ClaudeCredentialsFile when that is empty.
+	ClaudeCredentials string
+	// ClaudeCredentialsFile is a path the daemon reads the claude.ai credential
+	// from when ClaudeCredentials is empty. Set via AO_CLAUDE_CREDENTIALS_FILE.
+	ClaudeCredentialsFile string
+	// GitHubToken authenticates git clone/push and gh inside sprites. Set via
+	// AO_GITHUB_TOKEN, falling back to GITHUB_TOKEN then GH_TOKEN.
+	GitHubToken string
 	// Telemetry controls local/remote telemetry sinks.
 	Telemetry TelemetryConfig
 }
@@ -139,6 +150,9 @@ func (c Config) Addr() string {
 //	AO_AUTH_TOKEN        shared bearer token; empty = loopback no-auth mode
 //	AO_RUNTIME           session runtime zellij|flysprite (default zellij)
 //	AO_SPRITES_TOKEN     Fly Sprites API token (required when AO_RUNTIME=flysprite)
+//	AO_CLAUDE_CREDENTIALS       claude.ai OAuth credential content, injected into sprites
+//	AO_CLAUDE_CREDENTIALS_FILE  path read for the above when AO_CLAUDE_CREDENTIALS is unset
+//	AO_GITHUB_TOKEN      GitHub token for sprites (falls back to GITHUB_TOKEN, GH_TOKEN)
 //	AO_BIND_HOST         bind host; non-loopback requires AO_AUTH_TOKEN (default 127.0.0.1)
 //	AO_TELEMETRY_EVENTS  local event capture off|on (default off)
 //	AO_TELEMETRY_METRICS local metric capture off|on (default off)
@@ -211,6 +225,13 @@ func Load() (Config, error) {
 	if raw := os.Getenv("AO_SPRITES_TOKEN"); raw != "" {
 		cfg.SpritesToken = raw
 	}
+	if raw := os.Getenv("AO_CLAUDE_CREDENTIALS"); raw != "" {
+		cfg.ClaudeCredentials = raw
+	}
+	if raw := os.Getenv("AO_CLAUDE_CREDENTIALS_FILE"); raw != "" {
+		cfg.ClaudeCredentialsFile = raw
+	}
+	cfg.GitHubToken = firstNonEmptyEnv("AO_GITHUB_TOKEN", "GITHUB_TOKEN", "GH_TOKEN")
 
 	// AO_BIND_HOST widens the bind beyond loopback. It is honoured only when an
 	// auth token is set: the daemon has no TLS or access control otherwise, and
@@ -287,6 +308,17 @@ func Load() (Config, error) {
 	cfg.DataDir = dataDir
 
 	return cfg, nil
+}
+
+// firstNonEmptyEnv returns the value of the first set, non-empty environment
+// variable among keys, or "" if none are set.
+func firstNonEmptyEnv(keys ...string) string {
+	for _, k := range keys {
+		if v := os.Getenv(k); v != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 func parseToggleEnv(name, raw string) (bool, error) {

@@ -34,6 +34,49 @@ func TestGetLaunchCommandBypassWithPrompt(t *testing.T) {
 	}
 }
 
+func TestGetLaunchCommandRemoteControl(t *testing.T) {
+	p := &Plugin{resolvedBinary: "claude"}
+
+	on, err := p.GetLaunchCommand(context.Background(), ports.LaunchConfig{SessionID: "proj-1", RemoteControl: true, Prompt: "go"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !containsArg(on, "--remote-control") {
+		t.Fatalf("RemoteControl=true should add --remote-control: %v", on)
+	}
+
+	off, err := p.GetLaunchCommand(context.Background(), ports.LaunchConfig{SessionID: "proj-1", Prompt: "go"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if containsArg(off, "--remote-control") {
+		t.Fatalf("RemoteControl unset should NOT add --remote-control: %v", off)
+	}
+}
+
+func TestGetRestoreCommandRemoteControl(t *testing.T) {
+	p := &Plugin{resolvedBinary: "claude"}
+	cmd, ok, err := p.GetRestoreCommand(context.Background(), ports.RestoreConfig{
+		Session:       ports.SessionRef{ID: "proj-1", Metadata: map[string]string{ports.MetadataKeyAgentSessionID: "abc-123"}},
+		RemoteControl: true,
+	})
+	if err != nil || !ok {
+		t.Fatalf("GetRestoreCommand: ok=%v err=%v", ok, err)
+	}
+	if !containsArg(cmd, "--remote-control") {
+		t.Fatalf("restore command should add --remote-control: %v", cmd)
+	}
+}
+
+func containsArg(args []string, want string) bool {
+	for _, a := range args {
+		if a == want {
+			return true
+		}
+	}
+	return false
+}
+
 func TestGetLaunchCommandMapsPermissionModes(t *testing.T) {
 	tests := []struct {
 		name        string

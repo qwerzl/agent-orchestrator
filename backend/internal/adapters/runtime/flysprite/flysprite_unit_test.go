@@ -200,7 +200,10 @@ func TestWorkspaceCreateRemote(t *testing.T) {
 	box.scripts["mkdir"] = "ZELLIJ_OK\n"
 	box.scripts["git clone"] = "CLONE_OK\n"
 	host := &fakeHost{box: box, status: "running", found: true}
-	ws := NewWorkspace(host, staticReposUnit{url: "https://github.com/photon-hq/advanced-imessage-go.git"})
+	ws := NewWorkspace(host, staticReposUnit{url: "https://github.com/photon-hq/advanced-imessage-go.git"}, Secrets{
+		ClaudeCredentials: `{"token":"x"}`,
+		GitHubToken:       "ghtok",
+	})
 
 	info, err := ws.Create(context.Background(), ports.WorkspaceConfig{
 		ProjectID: "photon", SessionID: "x", Kind: domain.KindWorker, Branch: "ao-x",
@@ -217,11 +220,32 @@ func TestWorkspaceCreateRemote(t *testing.T) {
 	if len(host.created) != 1 || host.created[0] != "ao-x" {
 		t.Errorf("sprite created = %v, want [ao-x]", host.created)
 	}
+	// Credentials were injected into the sprite before the clone.
+	for _, p := range []string{
+		"/home/sprite/.claude/.credentials.json",
+		"/home/sprite/.git-credentials",
+		"/home/sprite/.config/gh/hosts.yml",
+	} {
+		if _, ok := box.written[p]; !ok {
+			t.Errorf("expected credential file %s to be written; got %v", p, keys(box.written))
+		}
+	}
+	if got := string(box.written["/home/sprite/.git-credentials"]); !strings.Contains(got, "ghtok") {
+		t.Errorf("git-credentials missing token: %q", got)
+	}
+}
+
+func keys(m map[string][]byte) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	return out
 }
 
 func TestWorkspaceCreateRejectsEmptyOrigin(t *testing.T) {
 	host := &fakeHost{box: newFakeBox(), found: false}
-	ws := NewWorkspace(host, staticReposUnit{url: ""})
+	ws := NewWorkspace(host, staticReposUnit{url: ""}, Secrets{})
 	_, err := ws.Create(context.Background(), ports.WorkspaceConfig{ProjectID: "p", SessionID: "x", Branch: "b"})
 	if err == nil || !strings.Contains(err.Error(), "no clonable git remote") {
 		t.Fatalf("want empty-origin error, got %v", err)

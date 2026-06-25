@@ -100,14 +100,21 @@ const (
 
 // LaunchConfig carries inputs needed to build a new agent launch command.
 type LaunchConfig struct {
-	Config           AgentConfig
-	IssueID          string
-	Permissions      PermissionMode
-	Prompt           string
-	SessionID        string
-	SystemPrompt     string
+	Config       AgentConfig
+	IssueID      string
+	Permissions  PermissionMode
+	Prompt       string
+	SessionID    string
+	SystemPrompt string
+	// SystemPromptFile is an optional path the adapter reads the system prompt
+	// from instead of SystemPrompt.
 	SystemPromptFile string
 	WorkspacePath    string
+	// RemoteControl asks the agent to enable its remote-control feature (steer
+	// the session from claude.ai / the mobile app). Adapters that have no such
+	// feature ignore it. The session manager turns this on for remote
+	// (sandboxed) workspaces, where the agent runs with claude.ai OAuth creds.
+	RemoteControl bool
 }
 
 // WorkspaceHookConfig carries inputs needed to install workspace-local agent hooks.
@@ -128,6 +135,9 @@ type RestoreConfig struct {
 	// resume — it is not part of the transcript — so adapters whose CLI has a
 	// system-prompt flag should re-apply this in their resume command.
 	SystemPrompt string
+	// RemoteControl re-enables the agent's remote-control feature on resume; see
+	// LaunchConfig.RemoteControl.
+	RemoteControl bool
 }
 
 // SessionRef identifies an AO session whose agent-owned metadata may be read.

@@ -142,6 +142,13 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 	if cfg.SessionID != "" {
 		cmd = append(cmd, "--session-id", claudeSessionUUID(cfg.SessionID))
 	}
+	// Remote Control lets the user steer this session from claude.ai / the mobile
+	// app. It requires a claude.ai subscription login (OAuth), so the orchestrator
+	// only requests it for remote sandboxed sessions, which run with injected
+	// claude.ai credentials rather than an API key.
+	if cfg.RemoteControl {
+		cmd = append(cmd, "--remote-control")
+	}
 	// A project's configured permissions drive the starting mode; the explicit
 	// LaunchConfig.Permissions wins when set so a per-spawn override still takes
 	// precedence over the stored project default.
@@ -234,8 +241,11 @@ func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig)
 	if err != nil {
 		return nil, false, err
 	}
-	cmd = make([]string, 0, 7)
+	cmd = make([]string, 0, 8)
 	cmd = append(cmd, binary)
+	if cfg.RemoteControl {
+		cmd = append(cmd, "--remote-control")
+	}
 	appendPermissionFlags(&cmd, cfg.Permissions)
 	if cfg.SystemPrompt != "" {
 		// --resume rebuilds the system prompt from the current flags (it is

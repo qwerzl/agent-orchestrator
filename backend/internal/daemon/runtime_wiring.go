@@ -49,7 +49,11 @@ func buildRuntimeStack(cfg config.Config, store *sqlite.Store, events terminal.E
 		}
 		host := flysprite.NewHost(cfg.SpritesToken)
 		rt := flysprite.New(flysprite.Options{Host: host})
-		ws := flysprite.NewWorkspace(host, projectOriginResolver{store: store})
+		secrets, err := flyspriteSecrets(cfg)
+		if err != nil {
+			return nil, err
+		}
+		ws := flysprite.NewWorkspace(host, projectOriginResolver{store: store}, secrets)
 		// The sprite PTY is opened over the Sprites exec API, not a local process,
 		// so the terminal manager uses the runtime's own spawner.
 		term := terminal.NewManager(rt, events, log, terminal.WithSpawn(rt.Spawn))
@@ -79,6 +83,22 @@ func buildRuntimeStack(cfg config.Config, store *sqlite.Store, events terminal.E
 	default:
 		return nil, fmt.Errorf("unknown AO_RUNTIME %q", cfg.Runtime)
 	}
+}
+
+// flyspriteSecrets resolves the credentials the daemon injects into each sprite:
+// the claude.ai OAuth credential (raw from AO_CLAUDE_CREDENTIALS, else read from
+// AO_CLAUDE_CREDENTIALS_FILE) and a GitHub token. Credentials are never read
+// from the OS keychain; the operator supplies them as a secret/env/file.
+func flyspriteSecrets(cfg config.Config) (flysprite.Secrets, error) {
+	creds := cfg.ClaudeCredentials
+	if creds == "" && cfg.ClaudeCredentialsFile != "" {
+		b, err := os.ReadFile(cfg.ClaudeCredentialsFile)
+		if err != nil {
+			return flysprite.Secrets{}, fmt.Errorf("read AO_CLAUDE_CREDENTIALS_FILE %q: %w", cfg.ClaudeCredentialsFile, err)
+		}
+		creds = string(b)
+	}
+	return flysprite.Secrets{ClaudeCredentials: creds, GitHubToken: cfg.GitHubToken}, nil
 }
 
 // projectOriginResolver resolves a project's clonable git remote URL from the
