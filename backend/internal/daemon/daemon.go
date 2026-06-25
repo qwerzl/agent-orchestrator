@@ -13,7 +13,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/runtime/zellij"
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd"
 	"github.com/aoagents/agent-orchestrator/backend/internal/notify"
@@ -23,7 +22,6 @@ import (
 	notificationsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/notification"
 	projectsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/project"
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite"
-	"github.com/aoagents/agent-orchestrator/backend/internal/terminal"
 )
 
 // Run starts the daemon and blocks until it exits. SIGINT/SIGTERM drive
@@ -82,22 +80,18 @@ func Run() error {
 		return err
 	}
 
-	// Terminal streaming: the Zellij runtime supplies the PTY-attach command and
-	// liveness; the CDC broadcaster feeds the session-state channel. The manager
-	// is handed to httpd, which mounts it at /mux. Raw PTY bytes never flow
-	// through the CDC change_log — only session-state events do.
-	// zellij's default socket dir is too long on macOS for long session ids
-	// (see zellij.DefaultSocketDir); use a short, stable one and ensure it exists.
-	zellijSocketDir := zellij.DefaultSocketDir()
-	if zellijSocketDir != "" {
-		if err := os.MkdirAll(zellijSocketDir, 0o700); err != nil {
-			// Don't abort startup, but surface it: every spawn's zellij session
-			// would otherwise fail later with an opaque socket-bind error.
-			log.Warn("could not create zellij socket dir; spawns may fail", "dir", zellijSocketDir, "error", err)
-		}
+	// Select the session runtime (local zellij panes or Fly Sprites via
+	// AO_RUNTIME) and build its matching workspace + terminal manager. The
+	// runtime supplies the PTY-attach command and liveness; the CDC broadcaster
+	// feeds the session-state channel. The manager is handed to httpd, which
+	// mounts it at /mux. Raw PTY bytes never flow through the CDC change_log —
+	// only session-state events do.
+	rtStack, err := buildRuntimeStack(cfg, store, cdcPipe.Broadcaster, log)
+	if err != nil {
+		return fmt.Errorf("build runtime: %w", err)
 	}
-	runtimeAdapter := zellij.New(zellij.Options{SocketDir: zellijSocketDir})
-	termMgr := terminal.NewManager(runtimeAdapter, cdcPipe.Broadcaster, log)
+	runtimeAdapter := rtStack.Runtime
+	termMgr := rtStack.Terminal
 	defer termMgr.Close()
 
 	// The agent messenger sends validated user input to the session's live
@@ -119,7 +113,7 @@ func Run() error {
 	// zellij runtime, a gitworktree workspace, the per-session agent resolver
 	// (AO_AGENT validated here for compatibility), and the agent messenger, then mount it
 	// on the API.
-	sessionSvc, reviewSvc, err := startSession(cfg, runtimeAdapter, store, lcStack.LCM, messenger, telemetrySink, log)
+	sessionSvc, reviewSvc, err := startSession(cfg, runtimeAdapter, rtStack.Workspace, store, lcStack.LCM, messenger, telemetrySink, log)
 	if err != nil {
 		stop()
 		lcStack.Stop()

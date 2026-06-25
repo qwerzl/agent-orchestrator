@@ -147,4 +147,11 @@ type WorkspaceInfo struct {
 	Branch    string
 	SessionID domain.SessionID
 	ProjectID domain.ProjectID
+	// Remote reports that the workspace does not live on the daemon's local
+	// filesystem (e.g. it was provisioned inside a Fly Sprite). The session
+	// manager skips daemon-host provisioning steps — shared-file symlinks,
+	// agent-hook file writes, and the argv[0] PATH pre-flight — for a remote
+	// workspace, since the remote runtime adapter owns provisioning in-place.
+	// Path is then opaque to the daemon host (a path inside the remote box).
+	Remote bool
 }

@@ -4,13 +4,11 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"path/filepath"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/activitydispatch"
 	agentregistry "github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/registry"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/reviewer"
-	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/runtime/zellij"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/workspace/gitworktree"
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
@@ -59,10 +57,10 @@ func (l *lifecycleStack) Stop() {
 }
 
 // startSession builds the controller-facing session service: a session manager
-// over the real zellij runtime, a per-session gitworktree workspace, the shared
-// store + LCM, the per-session agent resolver, and the agent messenger. The
-// returned service is mounted at httpd APIDeps.Sessions.
-func startSession(cfg config.Config, runtime *zellij.Runtime, store *sqlite.Store, lcm *lifecycle.Manager, messenger ports.AgentMessenger, telemetry ports.EventSink, log *slog.Logger) (*sessionsvc.Service, reviewsvc.Manager, error) {
+// over the selected runtime (local zellij or Fly Sprite) and its matching
+// workspace, the shared store + LCM, the per-session agent resolver, and the
+// agent messenger. The returned service is mounted at httpd APIDeps.Sessions.
+func startSession(cfg config.Config, runtime sessionRuntime, ws ports.Workspace, store *sqlite.Store, lcm *lifecycle.Manager, messenger ports.AgentMessenger, telemetry ports.EventSink, log *slog.Logger) (*sessionsvc.Service, reviewsvc.Manager, error) {
 	defaultAgent := cfg.Agent
 	if defaultAgent == "" {
 		defaultAgent = config.DefaultAgent
@@ -70,18 +68,6 @@ func startSession(cfg config.Config, runtime *zellij.Runtime, store *sqlite.Stor
 	agents, err := buildAgentResolver(defaultAgent, log)
 	if err != nil {
 		return nil, nil, err
-	}
-	ws, err := gitworktree.New(gitworktree.Options{
-		// Per-session worktrees live under the data dir, so a single AO_DATA_DIR
-		// override moves all durable per-user state together.
-		ManagedRoot: filepath.Join(cfg.DataDir, "worktrees"),
-		// Resolve each project's source repo from the projects table, so a
-		// session spawned for a registered project materialises its worktree off
-		// that repo. Unregistered projects fail loudly.
-		RepoResolver: projectRepoResolver{store: store},
-	})
-	if err != nil {
-		return nil, nil, fmt.Errorf("session workspace: %w", err)
 	}
 	mgr := sessionmanager.New(sessionmanager.Deps{
 		Runtime:   runtime,

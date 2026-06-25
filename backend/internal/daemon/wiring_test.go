@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -12,6 +13,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/runtime/zellij"
 	telemetryadapter "github.com/aoagents/agent-orchestrator/backend/internal/adapters/telemetry"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/workspace/gitworktree"
 	"github.com/aoagents/agent-orchestrator/backend/internal/cdc"
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
@@ -150,8 +152,15 @@ func TestWiring_StartSessionBuildsSessionService(t *testing.T) {
 	cfg := config.Config{DataDir: t.TempDir()}
 
 	runtime := zellij.New(zellij.Options{})
+	ws, err := gitworktree.New(gitworktree.Options{
+		ManagedRoot:  filepath.Join(cfg.DataDir, "worktrees"),
+		RepoResolver: projectRepoResolver{store: store},
+	})
+	if err != nil {
+		t.Fatalf("workspace: %v", err)
+	}
 	messenger := newSessionMessenger(store, runtime, log)
-	svc, reviewSvc, err := startSession(cfg, runtime, store, lcm, messenger, telemetryadapter.NoopSink{}, log)
+	svc, reviewSvc, err := startSession(cfg, runtime, ws, store, lcm, messenger, telemetryadapter.NoopSink{}, log)
 	if err != nil {
 		t.Fatalf("startSession: %v", err)
 	}

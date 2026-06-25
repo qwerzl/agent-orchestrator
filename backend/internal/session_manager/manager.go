@@ -214,24 +214,30 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		return domain.SessionRecord{}, fmt.Errorf("spawn %s: workspace: %w", id, err)
 	}
 
-	// Per-project workspace provisioning: symlink shared files, then run any
-	// post-create commands (e.g. `pnpm install`) before the agent launches.
-	if err := m.provisionWorkspace(ctx, project, ws.Path); err != nil {
-		_ = m.workspace.Destroy(ctx, ws)
-		m.markSpawnFailedTerminated(ctx, id)
-		return domain.SessionRecord{}, fmt.Errorf("spawn %s: provision: %w", id, err)
-	}
-
 	agent, ok := m.agents.Agent(cfg.Harness)
 	if !ok {
 		_ = m.workspace.Destroy(ctx, ws)
 		m.markSpawnFailedTerminated(ctx, id)
 		return domain.SessionRecord{}, fmt.Errorf("spawn %s: no agent adapter for harness %q", id, cfg.Harness)
 	}
-	if err := m.prepareWorkspace(ctx, agent, id, ws.Path); err != nil {
-		_ = m.workspace.Destroy(ctx, ws)
-		m.markSpawnFailedTerminated(ctx, id)
-		return domain.SessionRecord{}, fmt.Errorf("spawn %s: %w", id, err)
+
+	// Daemon-host provisioning only applies to a local workspace. A remote
+	// workspace (e.g. a Fly Sprite) is provisioned in-place by its runtime
+	// adapter — symlinking host files, writing host-side agent-hook files, and
+	// the argv[0] PATH pre-flight below would all target the wrong machine.
+	if !ws.Remote {
+		// Per-project workspace provisioning: symlink shared files, then run any
+		// post-create commands (e.g. `pnpm install`) before the agent launches.
+		if err := m.provisionWorkspace(ctx, project, ws.Path); err != nil {
+			_ = m.workspace.Destroy(ctx, ws)
+			m.markSpawnFailedTerminated(ctx, id)
+			return domain.SessionRecord{}, fmt.Errorf("spawn %s: provision: %w", id, err)
+		}
+		if err := m.prepareWorkspace(ctx, agent, id, ws.Path); err != nil {
+			_ = m.workspace.Destroy(ctx, ws)
+			m.markSpawnFailedTerminated(ctx, id)
+			return domain.SessionRecord{}, fmt.Errorf("spawn %s: %w", id, err)
+		}
 	}
 	agentConfig := effectiveAgentConfig(cfg.Kind, project.Config)
 	argv, err := agent.GetLaunchCommand(ctx, ports.LaunchConfig{
@@ -252,10 +258,14 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	// path the adapter returned) BEFORE handing the launch to the runtime.
 	// Zellij happily creates a session+pane around a missing command, so an
 	// unresolved binary would leak through as a "live" session that never ran.
-	if err := m.validateAgentBinary(argv); err != nil {
-		_ = m.workspace.Destroy(ctx, ws)
-		m.markSpawnFailedTerminated(ctx, id)
-		return domain.SessionRecord{}, fmt.Errorf("spawn %s: %w", id, err)
+	// Skipped for a remote workspace: argv[0] is resolved inside the remote box,
+	// not on the daemon host.
+	if !ws.Remote {
+		if err := m.validateAgentBinary(argv); err != nil {
+			_ = m.workspace.Destroy(ctx, ws)
+			m.markSpawnFailedTerminated(ctx, id)
+			return domain.SessionRecord{}, fmt.Errorf("spawn %s: %w", id, err)
+		}
 	}
 	handle, err := m.runtime.Create(ctx, ports.RuntimeConfig{
 		SessionID:     id,

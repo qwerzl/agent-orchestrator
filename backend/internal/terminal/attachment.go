@@ -42,6 +42,16 @@ type ptyProcess interface {
 // terminate the process.
 type spawnFunc func(ctx context.Context, argv []string, env []string, rows, cols uint16) (ptyProcess, error)
 
+// PTYProcess and SpawnFunc are exported aliases of the package-private
+// ptyProcess and spawnFunc. They let a runtime adapter outside this package
+// (e.g. the Fly Sprite runtime) supply a custom PTY spawner to WithSpawn:
+// without the aliases the unexported parameter type could not be named or
+// satisfied from another package.
+type PTYProcess = ptyProcess
+
+// SpawnFunc is the exported alias of spawnFunc (see PTYProcess).
+type SpawnFunc = spawnFunc
+
 // reattach policy: a PTY that drops is re-attached while the underlying Zellij
 // session is still alive, up to maxReattach consecutive failures. An attach that
 // survived longer than reattachResetGrace before dropping resets the counter, so

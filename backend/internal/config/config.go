@@ -109,6 +109,10 @@ type Config struct {
 	// Runtime selects the session runtime adapter: "zellij" (local panes) or
 	// "flysprite" (Fly Sprites). Set via AO_RUNTIME; defaults to DefaultRuntime.
 	Runtime string
+	// SpritesToken is the Fly Sprites API bearer token used by the flysprite
+	// runtime to create/exec/destroy sprites. Required when Runtime=="flysprite".
+	// Set via AO_SPRITES_TOKEN.
+	SpritesToken string
 	// Telemetry controls local/remote telemetry sinks.
 	Telemetry TelemetryConfig
 }
@@ -134,6 +138,7 @@ func (c Config) Addr() string {
 //	AO_ALLOWED_ORIGINS   CORS origins, comma-separated (default DefaultAllowedOrigins)
 //	AO_AUTH_TOKEN        shared bearer token; empty = loopback no-auth mode
 //	AO_RUNTIME           session runtime zellij|flysprite (default zellij)
+//	AO_SPRITES_TOKEN     Fly Sprites API token (required when AO_RUNTIME=flysprite)
 //	AO_BIND_HOST         bind host; non-loopback requires AO_AUTH_TOKEN (default 127.0.0.1)
 //	AO_TELEMETRY_EVENTS  local event capture off|on (default off)
 //	AO_TELEMETRY_METRICS local metric capture off|on (default off)
@@ -201,6 +206,10 @@ func Load() (Config, error) {
 		default:
 			return Config{}, fmt.Errorf("invalid AO_RUNTIME %q: must be zellij|flysprite", raw)
 		}
+	}
+
+	if raw := os.Getenv("AO_SPRITES_TOKEN"); raw != "" {
+		cfg.SpritesToken = raw
 	}
 
 	// AO_BIND_HOST widens the bind beyond loopback. It is honoured only when an

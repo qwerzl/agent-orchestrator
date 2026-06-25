@@ -37,11 +37,11 @@ func TestAuthMiddlewareEnforced(t *testing.T) {
 	defer srv.Close()
 
 	tests := []struct {
-		name        string
-		path        string
-		setAuth     func(*http.Request)
-		wantStatus  int  // exact status when set
-		wantNot401  bool // otherwise: assert the request passed auth
+		name       string
+		path       string
+		setAuth    func(*http.Request)
+		wantStatus int  // exact status when set
+		wantNot401 bool // otherwise: assert the request passed auth
 	}{
 		{
 			name:       "protected route without token is 401",
