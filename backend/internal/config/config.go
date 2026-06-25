@@ -127,6 +127,11 @@ type Config struct {
 	// GitHubToken authenticates git clone/push and gh inside sprites. Set via
 	// AO_GITHUB_TOKEN, falling back to GITHUB_TOKEN then GH_TOKEN.
 	GitHubToken string
+	// PublicURL is the daemon's externally reachable base URL (e.g. the Fly app's
+	// https://<app>.fly.dev). It is injected into each sprite as AO_DAEMON_URL so
+	// in-sprite `ao hooks` callbacks reach the daemon (sprites are off the private
+	// network and cannot use loopback). Set via AO_PUBLIC_URL.
+	PublicURL string
 	// Telemetry controls local/remote telemetry sinks.
 	Telemetry TelemetryConfig
 }
@@ -156,6 +161,7 @@ func (c Config) Addr() string {
 //	AO_CLAUDE_CREDENTIALS       claude.ai OAuth credential content, injected into sprites
 //	AO_CLAUDE_CREDENTIALS_FILE  path read for the above when AO_CLAUDE_CREDENTIALS is unset
 //	AO_GITHUB_TOKEN      GitHub token for sprites (falls back to GITHUB_TOKEN, GH_TOKEN)
+//	AO_PUBLIC_URL        daemon public base URL, injected into sprites as AO_DAEMON_URL
 //	AO_BIND_HOST         bind host; non-loopback requires AO_AUTH_TOKEN (default 127.0.0.1)
 //	AO_TELEMETRY_EVENTS  local event capture off|on (default off)
 //	AO_TELEMETRY_METRICS local metric capture off|on (default off)
@@ -235,6 +241,9 @@ func Load() (Config, error) {
 		cfg.ClaudeCredentialsFile = raw
 	}
 	cfg.GitHubToken = firstNonEmptyEnv("AO_GITHUB_TOKEN", "GITHUB_TOKEN", "GH_TOKEN")
+	if raw := strings.TrimSpace(os.Getenv("AO_PUBLIC_URL")); raw != "" {
+		cfg.PublicURL = strings.TrimRight(raw, "/")
+	}
 
 	// AO_BIND_HOST widens the bind beyond loopback. It is honoured only when an
 	// auth token is set: the daemon has no TLS or access control otherwise, and

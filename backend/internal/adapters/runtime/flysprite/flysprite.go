@@ -37,8 +37,10 @@ const (
 // the daemon needs: Create, Destroy, IsAlive, AttachCommand (terminal.PTYSource)
 // and SendMessage.
 type Runtime struct {
-	host    Host
-	timeout time.Duration
+	host      Host
+	timeout   time.Duration
+	daemonURL string
+	authToken string
 }
 
 // Options configures a Runtime.
@@ -48,6 +50,13 @@ type Options struct {
 	// Timeout bounds a single zellij control command (and the create readiness
 	// poll). Defaults to defaultTimeout.
 	Timeout time.Duration
+	// DaemonURL is the daemon's public base URL, injected into the agent env as
+	// AO_DAEMON_URL so in-sprite `ao hooks` callbacks reach the daemon. Empty
+	// disables hook-env injection.
+	DaemonURL string
+	// AuthToken is injected alongside DaemonURL as AO_AUTH_TOKEN so the in-sprite
+	// hook callbacks authenticate to the public daemon.
+	AuthToken string
 }
 
 // New builds a Runtime. It panics if Host is nil, matching the other adapters'
@@ -60,7 +69,7 @@ func New(opts Options) *Runtime {
 	if t <= 0 {
 		t = defaultTimeout
 	}
-	return &Runtime{host: opts.Host, timeout: t}
+	return &Runtime{host: opts.Host, timeout: t, daemonURL: opts.DaemonURL, authToken: opts.AuthToken}
 }
 
 // Create writes the agent layout into the sprite and starts a detached zellij
@@ -94,7 +103,7 @@ func (r *Runtime) Create(ctx context.Context, cfg ports.RuntimeConfig) (ports.Ru
 	// so create-background cannot fail with "session already exists".
 	_, _ = r.runZellij(ctx, box, deleteSessionArgs(session)...)
 
-	layout := buildLayout(cfg.WorkspacePath, normalizeAgentArgv0(cfg.Argv), cfg.Env)
+	layout := buildLayout(cfg.WorkspacePath, normalizeAgentArgv0(cfg.Argv), r.agentEnv(cfg.Env))
 	layoutPath := layoutDir + "/layout-" + session + ".kdl"
 	if err := box.WriteFile(ctx, layoutPath, []byte(layout), 0o600); err != nil {
 		return ports.RuntimeHandle{}, err
@@ -110,6 +119,24 @@ func (r *Runtime) Create(ctx context.Context, cfg ports.RuntimeConfig) (ports.Ru
 		return ports.RuntimeHandle{}, err
 	}
 	return handle, nil
+}
+
+// agentEnv augments the session env with the public daemon URL + auth token so
+// in-sprite `ao hooks` callbacks reach the daemon (sprites are off the private
+// network). It copies rather than mutating the caller's map.
+func (r *Runtime) agentEnv(base map[string]string) map[string]string {
+	if r.daemonURL == "" {
+		return base
+	}
+	merged := make(map[string]string, len(base)+2)
+	for k, v := range base {
+		merged[k] = v
+	}
+	merged["AO_DAEMON_URL"] = r.daemonURL
+	if r.authToken != "" {
+		merged["AO_AUTH_TOKEN"] = r.authToken
+	}
+	return merged
 }
 
 // waitAlive polls IsAlive until the session is listed or the timeout elapses;

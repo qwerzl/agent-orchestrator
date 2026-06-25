@@ -1,0 +1,43 @@
+# Fly.io config for the AO daemon. Deploy from the repo root:
+#   fly deploy --config deploy/fly/fly.toml
+# Set the app name and secrets first — see deploy/fly/README.md.
+
+app = "ao-daemon"
+primary_region = "iad"
+
+[build]
+  dockerfile = "deploy/fly/Dockerfile"
+
+# Non-secret config. Secrets (AO_AUTH_TOKEN, AO_SPRITES_TOKEN,
+# AO_CLAUDE_CREDENTIALS, AO_GITHUB_TOKEN, AO_PUBLIC_URL) go through `fly secrets`.
+[env]
+  AO_PORT = "8080"
+  AO_BIND_HOST = "0.0.0.0"
+  AO_RUNTIME = "flysprite"
+  AO_DATA_DIR = "/data"
+
+# Persist the SQLite store across deploys/restarts. One volume per machine; keep
+# min_machines_running = 1 (a single always-on daemon).
+[[mounts]]
+  source = "ao_data"
+  destination = "/data"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  # Always-on: the daemon holds session state + long-lived mux WebSockets, so it
+  # must not scale to zero.
+  auto_stop_machines = "off"
+  auto_start_machines = false
+  min_machines_running = 1
+
+  [[http_service.checks]]
+    interval = "15s"
+    timeout = "2s"
+    grace_period = "10s"
+    method = "GET"
+    path = "/healthz"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"

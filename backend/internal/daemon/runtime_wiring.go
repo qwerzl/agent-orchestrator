@@ -48,7 +48,7 @@ func buildRuntimeStack(cfg config.Config, store *sqlite.Store, events terminal.E
 			return nil, fmt.Errorf("AO_RUNTIME=flysprite requires AO_SPRITES_TOKEN (the Fly Sprites API token)")
 		}
 		host := flysprite.NewHost(cfg.SpritesToken)
-		rt := flysprite.New(flysprite.Options{Host: host})
+		rt := flysprite.New(flysprite.Options{Host: host, DaemonURL: cfg.PublicURL, AuthToken: cfg.AuthToken})
 		secrets, err := flyspriteSecrets(cfg)
 		if err != nil {
 			return nil, err
