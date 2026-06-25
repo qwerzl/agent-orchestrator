@@ -15,14 +15,17 @@ COPY backend/ ./backend/
 RUN cd backend && CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/ao ./cmd/ao
 
 FROM alpine:3.20
-RUN apk add --no-cache ca-certificates
+# ca-certificates for HTTPS (Sprites/Anthropic/GitHub); git + gh for the daemon's
+# GitHub PR-status observer. Sessions themselves run in sprites, not here.
+RUN apk add --no-cache ca-certificates git github-cli
 COPY --from=build /out/ao /usr/local/bin/ao
-# Defaults; secrets (AO_AUTH_TOKEN, AO_SPRITES_TOKEN, AO_CLAUDE_CREDENTIALS,
-# AO_GITHUB_TOKEN, AO_PUBLIC_URL) are supplied via `fly secrets`.
-ENV AO_PORT=8080 \
-    AO_BIND_HOST=0.0.0.0 \
+# Defaults shared by Fly and Railway; secrets (AO_AUTH_TOKEN, AO_SPRITES_TOKEN,
+# AO_CLAUDE_CREDENTIALS, AO_GITHUB_TOKEN, AO_PUBLIC_URL) are supplied by the
+# platform's secret store. The port is NOT pinned here: Fly sets AO_PORT=8080 in
+# fly.toml; Railway injects PORT, which the daemon binds via its PORT fallback.
+ENV AO_BIND_HOST=0.0.0.0 \
     AO_RUNTIME=flysprite \
     AO_DATA_DIR=/data
 EXPOSE 8080
-# Runs as root so the mounted Fly volume at /data is writable.
+# Runs as root so the mounted volume at /data is writable.
 ENTRYPOINT ["ao", "daemon"]

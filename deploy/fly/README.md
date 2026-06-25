@@ -37,7 +37,7 @@ fly volumes create ao_data --size 1 --region iad --app tao-daemon
 fly secrets set --app tao-daemon \
   AO_AUTH_TOKEN="$(openssl rand -hex 32)" \
   AO_SPRITES_TOKEN="<your-fly-sprites-token>" \
-  AO_GITHUB_TOKEN="<your-github-token>" \
+  GITHUB_TOKEN="<your-github-token>" \
   AO_PUBLIC_URL="https://tao-daemon.fly.dev" \
   AO_CLAUDE_CREDENTIALS="$(cat claude-credentials.json)"
 ```

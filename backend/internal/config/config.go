@@ -187,13 +187,16 @@ func Load() (Config, error) {
 		},
 	}
 
-	if raw := os.Getenv("AO_PORT"); raw != "" {
+	// AO_PORT wins; otherwise honour the platform-injected PORT (Railway, Heroku,
+	// Render, …) so the daemon binds whatever port the host expects without extra
+	// config.
+	if raw := firstNonEmptyEnv("AO_PORT", "PORT"); raw != "" {
 		port, err := strconv.Atoi(raw)
 		if err != nil {
-			return Config{}, fmt.Errorf("invalid AO_PORT %q: %w", raw, err)
+			return Config{}, fmt.Errorf("invalid port %q: %w", raw, err)
 		}
 		if port < 1 || port > 65535 {
-			return Config{}, fmt.Errorf("invalid AO_PORT %d: out of range 1-65535", port)
+			return Config{}, fmt.Errorf("invalid port %d: out of range 1-65535", port)
 		}
 		cfg.Port = port
 	}

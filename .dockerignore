@@ -1,5 +1,11 @@
-# The daemon image (deploy/fly/Dockerfile) only builds from backend/, so keep the
-# Fly build context tiny — exclude everything else (frontend, node_modules, .git).
-*
-!backend
+# Keep the daemon image build context small. The Dockerfile (deploy/fly/Dockerfile)
+# only builds from backend/, but we exclude by subtraction (rather than `* / !backend`)
+# so the Dockerfile itself stays in-context for builders that require it (Railway).
+.git
+**/node_modules
+frontend
+docs
+test
+*.log
+.DS_Store
 backend/**/*_test.go
