@@ -2,6 +2,7 @@ package flysprite
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -148,6 +149,27 @@ func (w *Workspace) provision(ctx context.Context, box Box, originURL, branch st
 	repoDir := repoDirFor(originURL)
 	if out, err := box.Run(ctx, nil, "", "bash", "-c", cloneScript(originURL, repoDir, branch)); err != nil || !strings.Contains(string(out), "CLONE_OK") {
 		return "", fmt.Errorf("flysprite workspace: clone %s: %w (%s)", originURL, err, strings.TrimSpace(string(out)))
+	}
+	// Seed ~/.claude.json so claude runs headlessly in the fresh sprite instead of
+	// blocking on first-run prompts: the per-folder trust dialog (mirrors the
+	// local claudecode PreLaunch step the session manager skips for a remote
+	// workspace) plus the one-time onboarding/theme picker.
+	claudeConfig, err := json.Marshal(map[string]any{
+		"theme":                        "dark",
+		"hasCompletedOnboarding":       true,
+		"hasSeenAutoModeEntryWarning":  true,
+		"remoteDialogSeen":             true,
+		"remoteControlUpsellSeenCount": 3,
+		"numStartups":                  5,
+		"projects": map[string]any{
+			repoDir: map[string]any{"hasTrustDialogAccepted": true},
+		},
+	})
+	if err != nil {
+		return "", fmt.Errorf("flysprite workspace: encode claude config: %w", err)
+	}
+	if err := box.WriteFile(ctx, "/home/sprite/.claude.json", claudeConfig, 0o644); err != nil {
+		return "", fmt.Errorf("flysprite workspace: write claude config: %w", err)
 	}
 	return repoDir, nil
 }
