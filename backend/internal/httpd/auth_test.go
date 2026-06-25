@@ -3,6 +3,7 @@ package httpd
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
@@ -23,6 +24,53 @@ func TestAuthMiddlewareLoopbackMode(t *testing.T) {
 	defer resp.Body.Close()
 	if resp.StatusCode == http.StatusUnauthorized {
 		t.Fatalf("loopback mode returned 401; want the request to reach the handler")
+	}
+}
+
+// TestAuthLogin exchanges a token for the ao_token cookie, which then
+// authenticates a route that cannot carry a bearer header (EventSource / mux).
+func TestAuthLogin(t *testing.T) {
+	const token = "s3cret-token"
+	cfg := config.Config{AuthToken: token, AllowedOrigins: []string{"app://renderer"}}
+	srv := httptest.NewServer(newTestRouter(cfg, discardLogger(), nil))
+	defer srv.Close()
+
+	bad, err := http.Post(srv.URL+authLoginPath, "application/json", strings.NewReader(`{"token":"nope"}`))
+	if err != nil {
+		t.Fatalf("login(bad): %v", err)
+	}
+	bad.Body.Close()
+	if bad.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("login with wrong token = %d, want 401", bad.StatusCode)
+	}
+
+	ok, err := http.Post(srv.URL+authLoginPath, "application/json", strings.NewReader(`{"token":"`+token+`"}`))
+	if err != nil {
+		t.Fatalf("login(ok): %v", err)
+	}
+	ok.Body.Close()
+	if ok.StatusCode != http.StatusOK {
+		t.Fatalf("login with valid token = %d, want 200", ok.StatusCode)
+	}
+	var cookie *http.Cookie
+	for _, ck := range ok.Cookies() {
+		if ck.Name == authCookieName {
+			cookie = ck
+		}
+	}
+	if cookie == nil || cookie.Value == "" {
+		t.Fatal("login did not set the ao_token cookie")
+	}
+
+	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/api/v1/sessions", nil)
+	req.AddCookie(cookie)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("cookie request: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode == http.StatusUnauthorized {
+		t.Fatal("ao_token cookie did not authenticate a protected route")
 	}
 }
 

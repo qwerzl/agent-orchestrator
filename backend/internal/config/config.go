@@ -115,8 +115,11 @@ type Config struct {
 	SpritesToken string
 	// ClaudeCredentials is the raw contents of the user's claude.ai OAuth
 	// credential (~/.claude/.credentials.json), injected into each sprite so
-	// Remote Control works. Set via AO_CLAUDE_CREDENTIALS, or read from
-	// ClaudeCredentialsFile when that is empty.
+	// Remote Control works. It must be a FULL-SCOPE login credential from an
+	// interactive `claude auth login`; a long-lived setup-token /
+	// CLAUDE_CODE_OAUTH_TOKEN is inference-only and Remote Control is refused with
+	// it. Set via AO_CLAUDE_CREDENTIALS, or read from ClaudeCredentialsFile when
+	// that is empty.
 	ClaudeCredentials string
 	// ClaudeCredentialsFile is a path the daemon reads the claude.ai credential
 	// from when ClaudeCredentials is empty. Set via AO_CLAUDE_CREDENTIALS_FILE.

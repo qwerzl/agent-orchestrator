@@ -2,8 +2,11 @@ package httpd
 
 import (
 	"crypto/subtle"
+	"encoding/json"
 	"net/http"
 	"strings"
+
+	"github.com/go-chi/chi/v5"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/envelope"
@@ -50,10 +53,52 @@ func authMiddleware(cfg config.Config) func(http.Handler) http.Handler {
 // /internal/telemetry/* are deliberately excluded (the last two keep their
 // loopback-only localControlRequest gate).
 func authProtectedPath(path string) bool {
+	// The login endpoint must be reachable without the token so a browser can
+	// exchange it for the ao_token cookie (EventSource / the mux WebSocket cannot
+	// send an Authorization header).
+	if path == authLoginPath {
+		return false
+	}
 	if path == "/mux" {
 		return true
 	}
 	return strings.HasPrefix(path, "/api/")
+}
+
+// authLoginPath is the unauthenticated token-exchange endpoint.
+const authLoginPath = "/api/v1/auth/login"
+
+// mountAuthLogin registers the token-login endpoint when auth is enabled. The
+// web app POSTs {"token":"..."}; a valid token is echoed back as an HttpOnly
+// ao_token cookie that subsequent SSE/mux requests present. When no token is
+// configured (loopback no-auth mode) the route is not mounted.
+func mountAuthLogin(r chi.Router, cfg config.Config) {
+	if cfg.AuthToken == "" {
+		return
+	}
+	r.Post(authLoginPath, func(w http.ResponseWriter, req *http.Request) {
+		var body struct {
+			Token string `json:"token"`
+		}
+		if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+			envelope.WriteAPIError(w, req, http.StatusBadRequest, "bad_request", "INVALID_JSON", "request body must be valid JSON", nil)
+			return
+		}
+		if !validToken(strings.TrimSpace(body.Token), cfg.AuthToken) {
+			envelope.WriteAPIError(w, req, http.StatusUnauthorized, "unauthorized", "UNAUTHORIZED", "invalid auth token", nil)
+			return
+		}
+		http.SetCookie(w, &http.Cookie{
+			Name:     authCookieName,
+			Value:    cfg.AuthToken,
+			Path:     "/",
+			HttpOnly: true,
+			Secure:   true,
+			SameSite: http.SameSiteLaxMode,
+			MaxAge:   7 * 24 * 60 * 60,
+		})
+		envelope.WriteJSON(w, http.StatusOK, map[string]any{"status": "ok"})
+	})
 }
 
 // tokenFromRequest extracts a presented token from, in order of preference, the

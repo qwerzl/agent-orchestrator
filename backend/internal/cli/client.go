@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"strings"
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
@@ -78,26 +80,85 @@ func (c *commandContext) doJSON(ctx context.Context, method, path string, body, 
 	return c.doJSONPath(ctx, method, "/api/v1/"+path, body, out)
 }
 
+// postLoopbackJSON posts to a loopback-only daemon control/telemetry endpoint.
+// It never uses AO_DAEMON_URL: these routes are localControlRequest-gated and
+// only meaningful against a local daemon. In remote mode (no run-file) it fails,
+// which callers ignore.
 func (c *commandContext) postLoopbackJSON(ctx context.Context, path string, body any) error {
-	return c.doJSONPath(ctx, http.MethodPost, path, body, nil)
+	target, err := c.resolveLoopbackTarget()
+	if err != nil {
+		return err
+	}
+	return c.doRequest(ctx, target, http.MethodPost, path, body, nil)
 }
 
 func (c *commandContext) doJSONPath(ctx context.Context, method, path string, body, out any) error {
+	target, err := c.resolveDaemonTarget()
+	if err != nil {
+		return err
+	}
+	return c.doRequest(ctx, target, method, path, body, out)
+}
+
+// daemonTarget is the resolved base URL (and optional bearer token) for talking
+// to the daemon: a remote daemon from AO_DAEMON_URL, or the local loopback
+// daemon discovered via the run-file.
+type daemonTarget struct {
+	baseURL string
+	token   string
+}
+
+// wsURL converts the target's HTTP base URL to its ws(s) form for the mux.
+func (t daemonTarget) wsURL(path string) string {
+	base := t.baseURL
+	switch {
+	case strings.HasPrefix(base, "https://"):
+		base = "wss://" + strings.TrimPrefix(base, "https://")
+	case strings.HasPrefix(base, "http://"):
+		base = "ws://" + strings.TrimPrefix(base, "http://")
+	}
+	return base + path
+}
+
+// resolveDaemonTarget picks the daemon to talk to. AO_DAEMON_URL (plus the
+// AO_AUTH_TOKEN bearer) targets a remote daemon; otherwise it falls back to the
+// loopback daemon discovered via the run-file (the historical behavior).
+func (c *commandContext) resolveDaemonTarget() (daemonTarget, error) {
 	cfg, err := config.Load()
 	if err != nil {
-		return err
+		return daemonTarget{}, err
 	}
+	if raw := strings.TrimSpace(os.Getenv("AO_DAEMON_URL")); raw != "" {
+		return daemonTarget{baseURL: strings.TrimRight(raw, "/"), token: cfg.AuthToken}, nil
+	}
+	return loopbackTarget(c.deps.ProcessAlive, cfg)
+}
+
+// resolveLoopbackTarget always resolves the local loopback daemon, ignoring
+// AO_DAEMON_URL — for control/telemetry routes that only exist locally.
+func (c *commandContext) resolveLoopbackTarget() (daemonTarget, error) {
+	cfg, err := config.Load()
+	if err != nil {
+		return daemonTarget{}, err
+	}
+	return loopbackTarget(c.deps.ProcessAlive, cfg)
+}
+
+func loopbackTarget(processAlive func(int) bool, cfg config.Config) (daemonTarget, error) {
 	info, err := runfile.Read(cfg.RunFilePath)
 	if err != nil {
-		return err
+		return daemonTarget{}, err
 	}
 	if info == nil {
-		return fmt.Errorf("AO daemon is not running — start it with `ao start`")
+		return daemonTarget{}, fmt.Errorf("AO daemon is not running — start it with `ao start`")
 	}
-	if !c.deps.ProcessAlive(info.PID) {
-		return fmt.Errorf("AO daemon is not running (stale run-file at %s) — start it with `ao start`", cfg.RunFilePath)
+	if !processAlive(info.PID) {
+		return daemonTarget{}, fmt.Errorf("AO daemon is not running (stale run-file at %s) — start it with `ao start`", cfg.RunFilePath)
 	}
+	return daemonTarget{baseURL: fmt.Sprintf("http://%s:%d", config.LoopbackHost, info.Port)}, nil
+}
 
+func (c *commandContext) doRequest(ctx context.Context, target daemonTarget, method, path string, body, out any) error {
 	var reader io.Reader = http.NoBody
 	if body != nil {
 		payload, err := json.Marshal(body)
@@ -106,20 +167,22 @@ func (c *commandContext) doJSONPath(ctx context.Context, method, path string, bo
 		}
 		reader = bytes.NewReader(payload)
 	}
-	url := fmt.Sprintf("http://%s:%d%s", config.LoopbackHost, info.Port, path)
-	req, err := http.NewRequestWithContext(ctx, method, url, reader) // #nosec G704 -- daemon host is fixed loopback; path is an internal API route.
+	req, err := http.NewRequestWithContext(ctx, method, target.baseURL+path, reader) // #nosec G704 -- target is the discovered loopback daemon or an explicit AO_DAEMON_URL.
 	if err != nil {
 		return err
 	}
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
+	if target.token != "" {
+		req.Header.Set("Authorization", "Bearer "+target.token)
+	}
 
 	// Reuse the injected client's transport (keeps it stubbable in tests) but
 	// give daemon API calls far more headroom than the 2s status-probe timeout.
 	client := *c.deps.HTTPClient
 	client.Timeout = commandTimeout
-	resp, err := client.Do(req) // #nosec G704 -- request target is the fixed loopback daemon URL above.
+	resp, err := client.Do(req) // #nosec G704 -- request target is the resolved daemon URL above.
 	if err != nil {
 		return fmt.Errorf("call daemon: %w", err)
 	}

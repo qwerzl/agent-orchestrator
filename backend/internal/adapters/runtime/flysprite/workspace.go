@@ -30,6 +30,10 @@ type RepoResolver interface {
 // Both are optional; an empty field is simply not written.
 type Secrets struct {
 	// ClaudeCredentials is the raw content written to ~/.claude/.credentials.json.
+	// For Remote Control to work it MUST be a full-scope login credential from an
+	// interactive `claude auth login` — a long-lived `claude setup-token` /
+	// CLAUDE_CODE_OAUTH_TOKEN is inference-only and Claude Code refuses Remote
+	// Control with it.
 	ClaudeCredentials string
 	// GitHubToken authenticates HTTPS git + gh inside the sprite.
 	GitHubToken string
