@@ -129,6 +129,12 @@ func (m *Service) Get(ctx context.Context, id domain.ProjectID) (GetResult, erro
 // check and the store write — two concurrent calls for the same path would both
 // pass FindProjectByPath and then race on those mutations.
 func (m *Service) Add(ctx context.Context, in AddInput) (Project, error) {
+	// Remote daemons (the flysprite runtime on Fly/Railway) register a project by
+	// its clone URL, since the repo is cloned inside the sandbox and the daemon
+	// never accesses a local checkout.
+	if in.RepoOriginURL != nil && strings.TrimSpace(*in.RepoOriginURL) != "" {
+		return m.addByURL(ctx, in)
+	}
 	path, err := normalizePath(in.Path)
 	if err != nil {
 		return Project{}, err
@@ -225,6 +231,79 @@ func (m *Service) Add(ctx context.Context, in AddInput) (Project, error) {
 	}
 	m.emitProjectAdded(row, projectCountBefore == 0)
 	return projectFromRow(row), nil
+}
+
+// addByURL registers a project from a clonable git remote (no local checkout).
+// It derives the id/name from the repo name and stores the URL as both the
+// display path and the RepoOriginURL the flysprite workspace clones.
+func (m *Service) addByURL(ctx context.Context, in AddInput) (Project, error) {
+	originURL := strings.TrimSpace(*in.RepoOriginURL)
+	id := defaultProjectIDFromURL(originURL)
+	if in.ProjectID != nil {
+		id = domain.ProjectID(strings.TrimSpace(*in.ProjectID))
+	}
+	if err := validateProjectID(id); err != nil {
+		return Project{}, err
+	}
+
+	m.addMu.Lock()
+	defer m.addMu.Unlock()
+
+	projectCountBefore, err := m.activeProjectCount(ctx)
+	if err != nil {
+		return Project{}, apierr.Internal("PROJECT_LOAD_FAILED", "Failed to load project")
+	}
+
+	name := string(id)
+	if in.Name != nil && strings.TrimSpace(*in.Name) != "" {
+		name = strings.TrimSpace(*in.Name)
+	}
+
+	if existing, ok, err := m.store.GetProject(ctx, string(id)); err != nil {
+		return Project{}, apierr.Internal("PROJECT_LOAD_FAILED", "Failed to load project")
+	} else if ok && existing.ArchivedAt.IsZero() {
+		return Project{}, apierr.Conflict("ID_ALREADY_REGISTERED", "A project with this id is already registered", map[string]any{
+			"existingProjectId":  existing.ID,
+			"suggestedProjectId": string(m.suggestID(ctx, id)),
+		})
+	}
+
+	var config domain.ProjectConfig
+	if in.Config != nil {
+		if err := in.Config.Validate(); err != nil {
+			return Project{}, apierr.Invalid("INVALID_PROJECT_CONFIG", err.Error(), nil)
+		}
+		config = *in.Config
+	}
+
+	row := domain.ProjectRecord{
+		ID:            string(id),
+		Path:          originURL, // no local checkout; the URL doubles as the display path
+		DisplayName:   name,
+		RegisteredAt:  time.Now(),
+		Kind:          domain.ProjectKindSingleRepo,
+		Config:        config,
+		RepoOriginURL: originURL,
+	}
+	if err := m.store.UpsertProject(ctx, row); err != nil {
+		return Project{}, apierr.Internal("PROJECT_ADD_FAILED", "Failed to register project")
+	}
+	m.emitProjectAdded(row, projectCountBefore == 0)
+	return projectFromRow(row), nil
+}
+
+// defaultProjectIDFromURL derives a project id from a git remote URL's repo name
+// (e.g. https://github.com/org/advanced-imessage-go.git -> advanced-imessage-go).
+func defaultProjectIDFromURL(originURL string) domain.ProjectID {
+	s := strings.TrimSpace(originURL)
+	s = strings.TrimSuffix(s, ".git")
+	s = strings.TrimRight(s, "/")
+	if i := strings.LastIndexAny(s, "/:"); i >= 0 {
+		s = s[i+1:]
+	}
+	s = strings.ToLower(strings.TrimSpace(s))
+	s = strings.ReplaceAll(s, " ", "-")
+	return domain.ProjectID(s)
 }
 
 func (m *Service) activeProjectCount(ctx context.Context) (int, error) {

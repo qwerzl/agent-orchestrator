@@ -11,11 +11,16 @@ type GetResult struct {
 
 // AddInput is the body shape for POST /api/v1/projects.
 type AddInput struct {
-	Path        string                `json:"path"`
-	ProjectID   *string               `json:"projectId,omitempty"`
-	Name        *string               `json:"name,omitempty"`
-	Config      *domain.ProjectConfig `json:"config,omitempty"`
-	AsWorkspace bool                  `json:"asWorkspace,omitempty"`
+	Path      string  `json:"path"`
+	ProjectID *string `json:"projectId,omitempty"`
+	Name      *string `json:"name,omitempty"`
+	// RepoOriginURL registers the project by its clonable git remote instead of a
+	// local path. Use this against a remote daemon (e.g. the flysprite runtime on
+	// Fly/Railway), where the repo is cloned inside the sandbox and the daemon
+	// never touches a local checkout. When set, Path is ignored.
+	RepoOriginURL *string               `json:"repoOriginUrl,omitempty"`
+	Config        *domain.ProjectConfig `json:"config,omitempty"`
+	AsWorkspace   bool                  `json:"asWorkspace,omitempty"`
 }
 
 // SetConfigInput is the body shape for PUT /api/v1/projects/{id}/config. Config

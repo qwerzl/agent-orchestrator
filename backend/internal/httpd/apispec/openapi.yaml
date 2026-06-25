@@ -1427,6 +1427,10 @@ components:
           type:
           - "null"
           - string
+        repoOriginUrl:
+          type:
+          - "null"
+          - string
       required:
       - path
       type: object

@@ -16,6 +16,7 @@ import (
 
 type projectAddOptions struct {
 	path              string
+	repoURL           string
 	id                string
 	name              string
 	workerAgent       string
@@ -39,11 +40,12 @@ type projectRemoveOptions struct {
 // addProjectRequest mirrors the daemon's project AddInput body for
 // POST /api/v1/projects. projectId and name are optional (pointers omit them).
 type addProjectRequest struct {
-	Path        string         `json:"path"`
-	ProjectID   *string        `json:"projectId,omitempty"`
-	Name        *string        `json:"name,omitempty"`
-	Config      *projectConfig `json:"config,omitempty"`
-	AsWorkspace bool           `json:"asWorkspace,omitempty"`
+	Path          string         `json:"path"`
+	ProjectID     *string        `json:"projectId,omitempty"`
+	Name          *string        `json:"name,omitempty"`
+	RepoOriginURL *string        `json:"repoOriginUrl,omitempty"`
+	Config        *projectConfig `json:"config,omitempty"`
+	AsWorkspace   bool           `json:"asWorkspace,omitempty"`
 }
 
 type projectSummary struct {
@@ -212,17 +214,21 @@ func newProjectAddCommand(ctx *commandContext) *cobra.Command {
 	var opts projectAddOptions
 	cmd := &cobra.Command{
 		Use:   "add",
-		Short: "Register a local git repo as a project",
-		Long: "Register a local git repo as a project so sessions can be spawned in it.\n\n" +
-			"The path must be an existing git repository on disk. With --as-workspace, " +
-			"the path may be a parent folder containing direct child git repositories; " +
-			"AO initializes/adopts the parent as the root repo and gitignores children.",
+		Short: "Register a git repo as a project",
+		Long: "Register a git repo as a project so sessions can be spawned in it.\n\n" +
+			"Use --path for a local git repo (the daemon reads it on disk). Use --repo-url " +
+			"to register by clone URL against a REMOTE daemon (e.g. the Fly Sprite runtime): " +
+			"the repo is cloned inside the sandbox, so the daemon needs no local checkout.\n\n" +
+			"With --as-workspace, --path may be a parent folder of direct child git repos.",
 		Args: noArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if opts.path == "" {
-				return usageError{fmt.Errorf("--path is required")}
+			if opts.path == "" && opts.repoURL == "" {
+				return usageError{fmt.Errorf("one of --path or --repo-url is required")}
 			}
 			req := addProjectRequest{Path: opts.path, AsWorkspace: opts.asWorkspace}
+			if opts.repoURL != "" {
+				req.RepoOriginURL = &opts.repoURL
+			}
 			if opts.id != "" {
 				req.ProjectID = &opts.id
 			}
@@ -244,7 +250,8 @@ func newProjectAddCommand(ctx *commandContext) *cobra.Command {
 		},
 	}
 	f := cmd.Flags()
-	f.StringVar(&opts.path, "path", "", "Absolute path to the local git repo (required)")
+	f.StringVar(&opts.path, "path", "", "Absolute path to a local git repo (local daemon)")
+	f.StringVar(&opts.repoURL, "repo-url", "", "Clone URL to register against a remote daemon (cloned inside the sandbox)")
 	f.StringVar(&opts.id, "id", "", "Project id (default: derived by the daemon from the path)")
 	f.StringVar(&opts.name, "name", "", "Display name")
 	f.StringVar(&opts.workerAgent, "worker-agent", "", "Default worker session agent")

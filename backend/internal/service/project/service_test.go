@@ -468,6 +468,39 @@ func gitRepoWithOrigin(t *testing.T, originURL string) string {
 	return dir
 }
 
+func TestManager_AddByURLRegistersCloneURL(t *testing.T) {
+	ctx := context.Background()
+	store, err := sqlite.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	m := project.New(store)
+
+	url := "https://github.com/photon-hq/advanced-imessage-go.git"
+	proj, err := m.Add(ctx, project.AddInput{RepoOriginURL: &url})
+	if err != nil {
+		t.Fatalf("Add by URL: %v", err)
+	}
+	if proj.ID != "advanced-imessage-go" {
+		t.Fatalf("derived id = %q, want advanced-imessage-go", proj.ID)
+	}
+
+	rec, ok, err := store.GetProject(ctx, "advanced-imessage-go")
+	if err != nil || !ok {
+		t.Fatalf("GetProject: ok=%v err=%v", ok, err)
+	}
+	if rec.RepoOriginURL != url {
+		t.Fatalf("RepoOriginURL = %q, want %q", rec.RepoOriginURL, url)
+	}
+
+	// Re-registering the same URL conflicts on the derived id (no local path/git
+	// needed at any point).
+	if _, err := m.Add(ctx, project.AddInput{RepoOriginURL: &url}); err == nil {
+		t.Fatal("re-add same URL: want conflict, got nil")
+	}
+}
+
 func TestManager_AddPopulatesRepoOriginURL(t *testing.T) {
 	ctx := context.Background()
 

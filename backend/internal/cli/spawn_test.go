@@ -26,18 +26,18 @@ func TestSpawnCommand_RequiresProject(t *testing.T) {
 	}
 }
 
-// TestProjectAddCommand_RequiresPath asserts `ao project add` rejects a missing
-// --path before touching the network.
-func TestProjectAddCommand_RequiresPath(t *testing.T) {
+// TestProjectAddCommand_RequiresPathOrURL asserts `ao project add` rejects a
+// missing source (neither --path nor --repo-url) before touching the network.
+func TestProjectAddCommand_RequiresPathOrURL(t *testing.T) {
 	var out, errb bytes.Buffer
 	root := NewRootCommand(Deps{Out: &out, Err: &errb})
 	root.SetArgs([]string{"project", "add"})
 	err := root.Execute()
 	if err == nil {
-		t.Fatal("expected an error when --path is missing")
+		t.Fatal("expected an error when neither --path nor --repo-url is given")
 	}
-	if !strings.Contains(err.Error(), "--path is required") {
-		t.Fatalf("error = %v, want it to mention --path is required", err)
+	if !strings.Contains(err.Error(), "--path or --repo-url is required") {
+		t.Fatalf("error = %v, want it to mention --path or --repo-url is required", err)
 	}
 }
 
