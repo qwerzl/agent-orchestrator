@@ -1,0 +1,5 @@
+# The daemon image (deploy/fly/Dockerfile) only builds from backend/, so keep the
+# Fly build context tiny — exclude everything else (frontend, node_modules, .git).
+*
+!backend
+backend/**/*_test.go
